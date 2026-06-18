@@ -11,9 +11,9 @@ def semantic_chunk(text, size, overlap):
     chunks = []
     i = 0
     while i < len(sentences):
-        batch = [s.strip() for s in sentences[i:i+size]]
+        batch = [s.strip() for s in sentences[i : i + size]]
         batch = [s for s in batch if s]
         if batch:
-            chunks.append(' '.join(batch))
+            chunks.append(" ".join(batch))
         i += size - overlap
     return chunks
