@@ -10,7 +10,6 @@ from cli.hybrid_search_lib.utils import *
 def main() -> None:
     parser = argparse.ArgumentParser(description="Hybrid Search CLI")
     subparser = parser.add_subparsers(dest="command", help="Available commands")
-
     normalize_parser = subparser.add_parser(
         "normalize", help="Normalizes the given values in the range 0-1"
     )
@@ -49,6 +48,12 @@ def main() -> None:
     rrf_search_parser.add_argument(
         "--limit", type=int, nargs="?", default=5, help="Top N documents"
     )
+    rrf_search_parser.add_argument(
+        "--enhance",
+        type=str,
+        choices=["spell", "rewrite", "expand"],
+        help="Query enhancement method",
+    )
 
     args = parser.parse_args()
     match args.command:
@@ -57,7 +62,7 @@ def main() -> None:
         case "weighted-search":
             weighted_search(args.query, args.alpha, args.limit)
         case "rrf-search":
-            rrf_search(args.query, args.k, args.limit)
+            rrf_search(enhance_text(args.query, args.enhance), args.k, args.limit)
         case _:
             parser.print_help()
 

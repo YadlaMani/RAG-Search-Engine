@@ -68,8 +68,10 @@ class HybridSearch:
         results = {}
         all_doc_ids = set(keyword_ranks) | set(semantic_ranks)
         for doc_id in all_doc_ids:
-            rff_score = (1 / (k + semantic_ranks.get(doc_id, 0))) + (
-                1 / (k + keyword_ranks.get(doc_id, 0))
+            sem_rank = semantic_ranks.get(doc_id)
+            kw_rank = keyword_ranks.get(doc_id)
+            rff_score = (1 / (k + sem_rank) if sem_rank else 0) + (
+                1 / (k + kw_rank) if kw_rank else 0
             )
             results[doc_id] = {
                 "rrf": rff_score,
