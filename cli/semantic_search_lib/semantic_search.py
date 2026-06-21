@@ -5,6 +5,7 @@ from cli.semantic_search_lib.chunking import semantic_chunk
 import pickle
 import json
 import os
+from sentence_transformers import CrossEncoder
 
 
 def cosine_similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:

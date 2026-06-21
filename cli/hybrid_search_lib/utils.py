@@ -3,6 +3,8 @@ import json
 import os
 from dotenv import load_dotenv
 from google import genai
+import time
+from sentence_transformers import CrossEncoder
 
 
 def normalize(scores):
@@ -30,13 +32,23 @@ def weighted_search(query, alpha, limit):
         )
 
 
-def rrf_search(query, k, limit):
+def rrf_search(query, k, limit, rerank_method):
     with open("./data/movies.json", "r") as f:
         data = json.load(f)
     documents = data["movies"]
     hybrid_search = HybridSearch(documents)
+    original_limit = limit
+    if rerank_method:
+        limit = limit * 5
     results = hybrid_search.rrf_search(query, k, limit)
-    for i, (doc_id, res) in enumerate(results):
+    if rerank_method:
+        print(
+            f"Re-ranking top {original_limit} results using {rerank_method} method...\nReciprocal Rank Fusion Results for {query} (k={k}):"
+        )
+        rerank_results(original_limit, results, rerank_method, query)
+        return
+
+    for i, (_, res) in enumerate(results):
         print(
             f"{i + 1}. {res['title']}\nRRF Score: {res['rrf']:.4f}\nBM25 Rank: {res['bm25']:.4f}, Semantic Rank: {res['semantic']:.4f}\n{res['description']}\n"
         )
@@ -100,3 +112,106 @@ def enhance_text(query, enhance):
             print(f"Enhanced query ({enhance}): '{query}' -> '{res.text}'\n")
             return res.text
     return query
+
+
+def rerank_results(limit, results, method, query):
+    load_dotenv()
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY environment variable not set")
+
+    client = genai.Client(api_key=api_key)
+    match method:
+        case "individual":
+            for _, res in results:
+                time.sleep(3)
+                contents = f"""Rate how well this movie matches the search query.
+
+                            Query: "{query}"
+                            Movie: {res["title"]} - {res["description"]}
+
+                            Consider:
+                            - Direct relevance to query
+                            - User intent (what they're looking for)
+                            - Content appropriateness
+
+                            Rate 0-10 (10 = perfect match).
+                            Output ONLY the number in your response, no other text or explanation.
+
+                            Score:"""
+                response = client.models.generate_content(
+                    model="gemma-4-31b-it", contents=contents
+                )
+                text = response.text
+                res["rerank"] = float(text.strip()) if text else 0.0
+                sorted_results = sorted(
+                    results, key=lambda x: x[1].get("rerank", 0.0), reverse=True
+                )
+                final_results = sorted_results[:limit]
+        case "batch":
+            movies_list = "\n".join(
+                f"ID {doc_id}: {res['title']} - {res['description']}"
+                for doc_id, res in results
+            )
+            contents = f"""Rank the movies listed below by relevance to the following search query.
+
+                    Query: "{query}"
+
+                    Movies:
+                    {movies_list}
+
+                    Return the movie IDs in order of relevance, best match first.
+
+                    Your response must be a raw JSON array of the IDs exactly as shown above.
+                    Do not wrap the JSON in Markdown. Do not use a ```json code block.
+                    Do not include any explanatory text.
+
+                    For example:
+                    [75, 12, 34, 2, 1]
+
+                    Ranking:"""
+            response = client.models.generate_content(
+                model="gemma-4-31b-it", contents=contents
+            )
+            text = response.text
+            if not text:
+                return results[:limit]
+            ranked_ids = json.loads(text.strip())
+            results_by_id = {doc_id: res for doc_id, res in results}
+            reranked = []
+            for rank, doc_id in enumerate(ranked_ids, start=1):
+                if doc_id in results_by_id:
+                    results_by_id[doc_id]["rerank"] = rank
+                    reranked.append((doc_id, results_by_id[doc_id]))
+            final_results = reranked[:limit]
+        case "cross_encoder":
+            pairs = []
+            for _, res in results:
+                pairs.append([query, f"{res['title']} - {res['description']}"])
+            cross_encoder = CrossEncoder("cross-encoder/ms-marco-TinyBERT-L2-v2")
+            scores = cross_encoder.predict(pairs)
+            idx = 0
+            for _, res in results:
+                res["cross-encoder"] = scores[idx]
+                idx += 1
+            sorted_results = sorted(
+                results, key=lambda x: x[1].get("cross-encoder", 0.0), reverse=True
+            )
+            final_results = sorted_results[:limit]
+    for i, (_, res) in enumerate(final_results):
+        if method == "batch":
+            rerank_line = f"Re-rank Rank: {res['rerank']}\n" if "rerank" in res else ""
+        elif method == "individual":
+            rerank_line = (
+                f"Re-rank Score: {res['rerank']:.4f}/10\n" if "rerank" in res else ""
+            )
+        else:
+            rerank_line = (
+                f"Cross Encoder Score: {res['cross-encoder']:.4f}\n"
+                if "cross-encoder" in res
+                else ""
+            )
+        print(
+            f"{i + 1}. {res['title']}\n{rerank_line}RRF Score: {res['rrf']:.4f}\nBM25 Rank: {res['bm25']:.4f}, Semantic Rank: {res['semantic']:.4f}\n{res['description']}\n"
+        )
+    return

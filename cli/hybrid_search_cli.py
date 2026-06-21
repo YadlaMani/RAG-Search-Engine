@@ -55,6 +55,13 @@ def main() -> None:
         help="Query enhancement method",
     )
 
+    rrf_search_parser.add_argument(
+        "--rerank-method",
+        type=str,
+        choices=["individual", "batch", "cross_encoder"],
+        help="rerank the result using the llm",
+    )
+
     args = parser.parse_args()
     match args.command:
         case "normalize":
@@ -62,7 +69,12 @@ def main() -> None:
         case "weighted-search":
             weighted_search(args.query, args.alpha, args.limit)
         case "rrf-search":
-            rrf_search(enhance_text(args.query, args.enhance), args.k, args.limit)
+            rrf_search(
+                enhance_text(args.query, args.enhance),
+                args.k,
+                args.limit,
+                args.rerank_method,
+            )
         case _:
             parser.print_help()
 
