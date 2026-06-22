@@ -32,7 +32,7 @@ def weighted_search(query, alpha, limit):
         )
 
 
-def rrf_search(query, k, limit, rerank_method):
+def rrf_search(query, k=60, limit=5, rerank_method=None, verbose=True):
     with open("./data/movies.json", "r") as f:
         data = json.load(f)
     documents = data["movies"]
@@ -41,26 +41,30 @@ def rrf_search(query, k, limit, rerank_method):
     if rerank_method:
         limit = limit * 5
     results = hybrid_search.rrf_search(query, k, limit)
-    if rerank_method:
-        print(
-            f"Re-ranking top {original_limit} results using {rerank_method} method...\nReciprocal Rank Fusion Results for {query} (k={k}):"
-        )
-        rerank_results(original_limit, results, rerank_method, query)
-        return
+    if verbose:
+        if rerank_method:
+            print("RFF Search Results before re-ranking")
+            for i, (_, res) in enumerate(results):
+                print(
+                    f"{i + 1}. {res['title']}\nRRF Score: {res['rrf']:.4f}\nBM25 Rank: {res['bm25']:.4f}, Semantic Rank: {res['semantic']:.4f}\n{res['description']}\n"
+                )
+            rerank_results(original_limit, results, rerank_method, query, k, verbose)
+        else:
+            for i, (_, res) in enumerate(results):
+                print(
+                    f"{i + 1}. {res['title']}\nRRF Score: {res['rrf']:.4f}\nBM25 Rank: {res['bm25']:.4f}, Semantic Rank: {res['semantic']:.4f}\n{res['description']}\n"
+                )
+    return results
 
-    for i, (_, res) in enumerate(results):
-        print(
-            f"{i + 1}. {res['title']}\nRRF Score: {res['rrf']:.4f}\nBM25 Rank: {res['bm25']:.4f}, Semantic Rank: {res['semantic']:.4f}\n{res['description']}\n"
-        )
 
-
-def enhance_text(query, enhance):
+def enhance_text(query, enhance=None):
     load_dotenv()
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY environment variable not set")
 
     client = genai.Client(api_key=api_key)
+    print(f"Original Query: {query}")
     if enhance:
         contents = ""
         match enhance:
@@ -114,7 +118,7 @@ def enhance_text(query, enhance):
     return query
 
 
-def rerank_results(limit, results, method, query):
+def rerank_results(limit, results, method, query, k, verbose=True):
     load_dotenv()
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -198,20 +202,63 @@ def rerank_results(limit, results, method, query):
                 results, key=lambda x: x[1].get("cross-encoder", 0.0), reverse=True
             )
             final_results = sorted_results[:limit]
-    for i, (_, res) in enumerate(final_results):
-        if method == "batch":
-            rerank_line = f"Re-rank Rank: {res['rerank']}\n" if "rerank" in res else ""
-        elif method == "individual":
-            rerank_line = (
-                f"Re-rank Score: {res['rerank']:.4f}/10\n" if "rerank" in res else ""
-            )
-        else:
-            rerank_line = (
-                f"Cross Encoder Score: {res['cross-encoder']:.4f}\n"
-                if "cross-encoder" in res
-                else ""
-            )
+    if verbose:
         print(
-            f"{i + 1}. {res['title']}\n{rerank_line}RRF Score: {res['rrf']:.4f}\nBM25 Rank: {res['bm25']:.4f}, Semantic Rank: {res['semantic']:.4f}\n{res['description']}\n"
+            f"Re-ranking top {limit} results using {method} method...\nReciprocal Rank Fusion Results for {query} (k={k}):"
         )
-    return
+        for i, (_, res) in enumerate(final_results):
+            if method == "batch":
+                rerank_line = (
+                    f"Re-rank Rank: {res['rerank']}\n" if "rerank" in res else ""
+                )
+            elif method == "individual":
+                rerank_line = (
+                    f"Re-rank Score: {res['rerank']:.4f}/10\n"
+                    if "rerank" in res
+                    else ""
+                )
+            else:
+                rerank_line = (
+                    f"Cross Encoder Score: {res['cross-encoder']:.4f}\n"
+                    if "cross-encoder" in res
+                    else ""
+                )
+            print(
+                f"{i + 1}. {res['title']}\n{rerank_line}RRF Score: {res['rrf']:.4f}\nBM25 Rank: {res['bm25']:.4f}, Semantic Rank: {res['semantic']:.4f}\n{res['description']}\n"
+            )
+    return final_results
+
+
+def evaluate_results(query, results):
+    load_dotenv()
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY environment variable not set")
+
+    client = genai.Client(api_key=api_key)
+    contents = f"""Rate how relevant each result is to this query on a 0-3 scale:
+
+        Query: "{query}"
+
+        Results:
+        {chr(10).join(f"{i + 1}. {res['title']} - {res['description'][:200]}" for i, (_, res) in enumerate(results))}
+
+        Scale:
+        - 3: Highly relevant
+        - 2: Relevant
+        - 1: Marginally relevant
+        - 0: Not relevant
+
+        Do NOT give any numbers other than 0, 1, 2, or 3.
+
+        Return ONLY the scores in the same order you were given the documents. Return a valid JSON list, nothing else. For example:
+
+        [2, 0, 3, 2, 0, 1]"""
+    resp = client.models.generate_content(model="gemma-4-31b-it", contents=contents)
+    text = resp.text
+    if not text:
+        print("No response from model")
+        return
+    scores = json.loads(text.strip())
+    for i, (_, res) in enumerate(results):
+        print(f"{i + 1}. {res['title']}: {scores[i]}/3")

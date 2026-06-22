@@ -62,6 +62,12 @@ def main() -> None:
         help="rerank the result using the llm",
     )
 
+    rrf_search_parser.add_argument(
+        "--evaluate",
+        action="store_true",
+        help="Use the llm to rank the results",
+    )
+
     args = parser.parse_args()
     match args.command:
         case "normalize":
@@ -69,12 +75,15 @@ def main() -> None:
         case "weighted-search":
             weighted_search(args.query, args.alpha, args.limit)
         case "rrf-search":
-            rrf_search(
+            results = rrf_search(
                 enhance_text(args.query, args.enhance),
                 args.k,
                 args.limit,
                 args.rerank_method,
             )
+            if args.evaluate:
+                evaluate_results(args.query, results)
+
         case _:
             parser.print_help()
 
