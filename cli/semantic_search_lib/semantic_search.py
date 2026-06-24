@@ -2,11 +2,9 @@ from sentence_transformers import SentenceTransformer
 from pathlib import Path
 import numpy as np
 from cli.semantic_search_lib.chunking import semantic_chunk
-from cli.constants import CACHE_DIR
 import pickle
 import json
 import os
-from sentence_transformers import CrossEncoder
 
 
 def cosine_similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:
@@ -21,13 +19,17 @@ def cosine_similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:
 
 
 class SemanticSearch:
+    CACHE_DIR = Path("/Users/mani/Developer/bootdev/rag-search-engine/cache")
+
     def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
         self.model = SentenceTransformer(model_name)
         self.embeddings = None
         self.documents = None
         self.document_map = {}
-        CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        self.embeddings_path = CACHE_DIR / "movie_embeddings.npy"
+        Path("cache").mkdir(exist_ok=True)
+        self.embeddings_path = Path(
+            os.path.join(self.CACHE_DIR, "movie_embeddings.npy")
+        )
 
     def build_embeddings(self, documents):
         self.documents = documents
@@ -36,6 +38,7 @@ class SemanticSearch:
             self.document_map[doc_id] = doc
             movies_list.append(f"{doc['title']}: {doc['description']}")
         self.embeddings = self.model.encode(movies_list, show_progress_bar=True)
+        self.CACHE_DIR.parent.mkdir(parents=True, exist_ok=True)
         np.save(self.embeddings_path, self.embeddings)
         return self.embeddings
 
@@ -78,8 +81,12 @@ class ChunkedSemanticSearch(SemanticSearch):
         super().__init__(model_name)
         self.chunk_embeddings = None
         self.chunk_metadata = None
-        self.chunk_embeddings_path = CACHE_DIR / "chunk_embeddings.npy"
-        self.chunk_metadata_path = CACHE_DIR / "chunk_metadata.pkl"
+        self.chunk_embeddings_path = Path(
+            os.path.join(self.CACHE_DIR, "chunk_embeddings.npy")
+        )
+        self.chunk_metadata_path = Path(
+            os.path.join(self.CACHE_DIR, "chunk_metadata.pkl")
+        )
 
     def build_chunk_embeddings(self, documents: list[dict]) -> np.ndarray:
         self.documents = documents
